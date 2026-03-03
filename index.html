@@ -5579,7 +5579,739 @@ _Shubh Labh Investment_`);
       }, 300);
     };
 
-  </script>
+    // ════════════════════════════════════════════════════════════════════
+    // ███ V3.0 — COMPLETE HIREMAN FEATURE PARITY ███
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── FIX: SIDEBAR DUPLICATION ──
+    (function fixSidebarDupes() {
+      const _origEnhanceSidebar = enhanceSidebar;
+      enhanceSidebar = function () {
+        document.querySelectorAll('.sidebar-nav .nav-item').forEach(b => {
+          const t = b.textContent.trim();
+          if (['Hand Loans', 'Accounting', 'Forecasts'].includes(t)) b.remove();
+        });
+        const existing = document.querySelectorAll('.nav-section');
+        existing.forEach(s => { if (s.textContent.trim() === 'Quick Notes') s.parentElement && s.parentElement.querySelectorAll('.sticky-panel, .btn').length && (s.nextElementSibling?.remove(), s.nextElementSibling?.remove(), s.remove()); });
+        _origEnhanceSidebar();
+      };
+    })();
+
+    // ── MASTER DATA (Areas, Branches, Brokers) ──
+    if (!DB.masters) DB.masters = JSON.parse(localStorage.getItem('sl_masters') || '{"areas":[],"branches":[],"brokers":[]}');
+    const _origSaveDB2 = saveDB;
+    saveDB = function () { _origSaveDB2(); localStorage.setItem('sl_masters', JSON.stringify(DB.masters || {})); localStorage.setItem('sl_vouchers', JSON.stringify(DB.vouchers || [])); localStorage.setItem('sl_templates', JSON.stringify(DB.templates || [])); };
+    if (!DB.vouchers) DB.vouchers = JSON.parse(localStorage.getItem('sl_vouchers') || '[]');
+    if (!DB.templates) DB.templates = JSON.parse(localStorage.getItem('sl_templates') || '[]');
+    EXTRA_PAGES.push('vouchers', 'bulkreceipt', 'masters', 'irrcalc', 'querybuilder', 'labels', 'templates', 'yearend', 'reconciliation', 'photovault');
+
+    // ════════════════════════════════════════════
+    // MASTER DATA PAGE
+    // ════════════════════════════════════════════
+    function renderMasters() {
+      const el = document.getElementById('masters-content'); if (!el) return;
+      const m = DB.masters || { areas: [], branches: [], brokers: [] };
+      const renderList = (arr, type, label) => {
+        const items = arr.map((v, i) => `<div class="acc-row"><span class="acc-label">${v}</span><span><button class="btn btn-red btn-sm" onclick="deleteMaster('${type}',${i})">✕</button></span></div>`).join('') || '<div style="color:var(--muted);font-size:0.78rem;padding:0.5rem;">No ${label} added</div>';
+        return `<div class="acc-card"><div style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:0.5rem;color:var(--gold);">${label} <button class="btn btn-gold btn-sm" onclick="addMaster('${type}','${label}')" style="float:right;">+ Add</button></div>${items}</div>`;
+      };
+      el.innerHTML = renderList(m.areas, 'areas', 'Areas') + renderList(m.branches, 'branches', 'Branches') + renderList(m.brokers, 'brokers', 'Brokers / Agents');
+    }
+    function addMaster(type, label) { const v = prompt(`New ${label} name:`, ''); if (!v) return; if (!DB.masters[type]) DB.masters[type] = []; DB.masters[type].push(v); saveDB(); renderMasters(); toast('✅', `${label} added`, 'var(--green)'); }
+    function deleteMaster(type, idx) { if (!confirm('Delete?')) return; DB.masters[type].splice(idx, 1); saveDB(); renderMasters(); }
+
+    // ════════════════════════════════════════════
+    // VOUCHER MANAGEMENT
+    // ════════════════════════════════════════════
+    function renderVouchers() {
+      const el = document.getElementById('voucher-list'); if (!el) return;
+      const vs = (DB.vouchers || []).sort((a, b) => new Date(b.date) - new Date(a.date));
+      document.getElementById('v-total').textContent = vs.length;
+      document.getElementById('v-in').textContent = fmtMoney(vs.filter(v => ['CashIn', 'BankIn'].includes(v.type)).reduce((s, v) => s + Number(v.amount || 0), 0));
+      document.getElementById('v-out').textContent = fmtMoney(vs.filter(v => ['CashOut', 'BankOut'].includes(v.type)).reduce((s, v) => s + Number(v.amount || 0), 0));
+      if (!vs.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">No vouchers yet</div></div>'; return; }
+      el.innerHTML = `<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Date</th><th>No.</th><th>Type</th><th>Party</th><th>Narration</th><th>Amount</th><th>Actions</th></tr></thead><tbody>${vs.map(v => `<tr><td>${fmtDate(v.date)}</td><td>${v.vno}</td><td><span class="badge ${['CashIn', 'BankIn'].includes(v.type) ? 'b-green' : 'b-red'}">${v.type}</span></td><td>${v.party || '—'}</td><td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${v.narration || '—'}</td><td style="font-family:'Syne';font-weight:700;">${fmtMoney(v.amount)}</td><td><button class="btn btn-red btn-sm" onclick="deleteVoucher('${v.id}')">🗑</button></td></tr>`).join('')}</tbody></table></div></div>`;
+    }
+    function addVoucher() {
+      const type = prompt('Voucher Type (CashIn/CashOut/BankIn/BankOut/Journal):', 'CashIn'); if (!type) return;
+      const party = prompt('Party Name:', ''); const amount = prompt('Amount (₹):', ''); if (!amount || isNaN(amount)) return;
+      const narration = prompt('Narration:', ''); const date = prompt('Date (YYYY-MM-DD):', today());
+      const vno = 'V' + String((DB.vouchers || []).length + 1).padStart(4, '0');
+      if (!DB.vouchers) DB.vouchers = [];
+      DB.vouchers.push({ id: uid(), vno, type, party, amount: Number(amount), narration, date: date || today(), by: currentUser?.username || 'admin', time: new Date().toISOString() });
+      saveDB(); renderVouchers(); audit('VOUCHER', `${type} voucher ${vno}: ₹${amount} - ${party}`); toast('✅', 'Voucher created', 'var(--green)');
+    }
+    function deleteVoucher(id) { if (!confirm('Delete?')) return; DB.vouchers = (DB.vouchers || []).filter(v => v.id !== id); saveDB(); renderVouchers(); }
+
+    // ════════════════════════════════════════════
+    // BULK RECEIPT ENTRY
+    // ════════════════════════════════════════════
+    function renderBulkReceipt() {
+      const el = document.getElementById('bulk-body'); if (!el) return;
+      const dateInput = document.getElementById('bulk-date');
+      const dt = dateInput?.value || today();
+      const activeClients = DB.clients.filter(c => c.status === 'Active').sort((a, b) => a.name.localeCompare(b.name));
+      if (!activeClients.length) { el.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">No active clients</td></tr>'; return; }
+      el.innerHTML = activeClients.map(c => {
+        const bal = getClientBalance(c);
+        const dueEmi = bal.paidCount + 1;
+        return `<tr>
+      <td>${c.clientcode || '—'}</td><td>${c.name}</td><td>${c.mobile || '—'}</td>
+      <td style="font-family:'Syne';font-weight:700;">${fmtMoney(c.emi)}</td><td>#${dueEmi}</td>
+      <td><input type="number" class="fl-input bulk-amt" data-cid="${c.id}" data-emi="${dueEmi}" placeholder="0" style="width:100px;padding:0.4rem;background:var(--s3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8rem;"/></td>
+      <td><select class="bulk-mode" data-cid="${c.id}" style="padding:0.35rem;background:var(--s3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.75rem;"><option>Cash</option><option>UPI</option><option>Bank</option><option>Cheque</option></select></td>
+    </tr>`;
+      }).join('');
+    }
+    function saveBulkReceipts() {
+      const dt = document.getElementById('bulk-date')?.value || today();
+      const inputs = document.querySelectorAll('.bulk-amt'); let count = 0;
+      inputs.forEach(inp => {
+        const amt = Number(inp.value); if (!amt || amt <= 0) return;
+        const cid = inp.dataset.cid; const emiNo = inp.dataset.emi;
+        const modeEl = document.querySelector(`.bulk-mode[data-cid="${cid}"]`);
+        const mode = modeEl?.value || 'Cash';
+        const receipt = 'BR' + String(DB.collections.length + 1).padStart(5, '0');
+        DB.collections.push({ id: uid(), clientId: cid, date: dt, amount: amt, emiNo: Number(emiNo), mode, receipt, penalty: 0, note: 'Bulk entry', by: currentUser?.username || 'admin' });
+        count++;
+      });
+      if (count === 0) { toast('⚠️', 'No amounts entered', 'var(--red)'); return; }
+      saveDB(); renderBulkReceipt(); renderCollections();
+      audit('BULK_RECEIPT', `Bulk entry: ${count} receipts on ${dt}`);
+      toast('✅', `${count} receipts saved!`, 'var(--green)');
+    }
+
+    // ════════════════════════════════════════════
+    // IRR CALCULATOR
+    // ════════════════════════════════════════════
+    function renderIRRCalc() {
+      const el = document.getElementById('irr-result'); if (!el) return;
+      el.innerHTML = '<div style="color:var(--muted);font-size:0.82rem;">Enter values above and click Calculate</div>';
+    }
+    function calcIRR() {
+      const loan = Number(document.getElementById('irr-loan')?.value || 0);
+      const emi = Number(document.getElementById('irr-emi')?.value || 0);
+      const tenure = Number(document.getElementById('irr-tenure')?.value || 0);
+      if (!loan || !emi || !tenure) { toast('⚠️', 'Fill all fields', 'var(--red)'); return; }
+      // Newton-Raphson IRR
+      let rate = 0.01;
+      for (let iter = 0; iter < 100; iter++) {
+        let pv = 0, dpv = 0;
+        for (let t = 1; t <= tenure; t++) { pv += emi / Math.pow(1 + rate, t); dpv -= t * emi / Math.pow(1 + rate, t + 1); }
+        pv -= loan;
+        const newRate = rate - pv / dpv;
+        if (Math.abs(newRate - rate) < 1e-8) break;
+        rate = newRate;
+      }
+      const monthlyRate = (rate * 100).toFixed(4);
+      const annualRate = (rate * 12 * 100).toFixed(2);
+      const totalPay = emi * tenure;
+      const totalInterest = totalPay - loan;
+      const el = document.getElementById('irr-result');
+      el.innerHTML = `<div class="acc-card">
+    <div style="font-family:'Syne',sans-serif;font-weight:700;color:var(--gold);margin-bottom:0.75rem;">📊 IRR Result</div>
+    <div class="acc-row"><span class="acc-label">Monthly IRR</span><span class="acc-val" style="color:var(--gold);">${monthlyRate}%</span></div>
+    <div class="acc-row"><span class="acc-label">Annual IRR (Flat)</span><span class="acc-val" style="color:var(--gold);">${annualRate}%</span></div>
+    <div class="acc-row"><span class="acc-label">Total Payment</span><span class="acc-val">${fmtMoney(totalPay)}</span></div>
+    <div class="acc-row"><span class="acc-label">Total Interest</span><span class="acc-val" style="color:var(--red);">${fmtMoney(totalInterest)}</span></div>
+    <div class="acc-row"><span class="acc-label">Interest/Principal Ratio</span><span class="acc-val">${((totalInterest / loan) * 100).toFixed(1)}%</span></div>
+  </div>`;
+    }
+
+    // ════════════════════════════════════════════
+    // BANK RECONCILIATION
+    // ════════════════════════════════════════════
+    function renderReconciliation() {
+      const el = document.getElementById('recon-body'); if (!el) return;
+      const colls = DB.collections.filter(c => c.mode !== 'Cash').sort((a, b) => new Date(b.date) - new Date(a.date));
+      const reconciled = colls.filter(c => c.reconciled);
+      const unreconciled = colls.filter(c => !c.reconciled);
+      document.getElementById('recon-total').textContent = colls.length;
+      document.getElementById('recon-done').textContent = reconciled.length;
+      document.getElementById('recon-pending').textContent = unreconciled.length;
+      if (!colls.length) { el.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">No bank transactions</td></tr>'; return; }
+      el.innerHTML = colls.map(c => {
+        const client = DB.clients.find(x => x.id === c.clientId);
+        return `<tr style="${c.reconciled ? 'opacity:0.6' : ''}">
+      <td>${fmtDate(c.date)}</td><td>${client?.name || '—'}</td><td>${c.receipt || '—'}</td>
+      <td>${c.mode}</td><td style="font-family:'Syne';font-weight:700;">${fmtMoney(c.amount)}</td>
+      <td>${c.reconciled ? '<span class="badge b-green">✓ Done</span>' : '<span class="badge b-yellow">Pending</span>'}</td>
+      <td><button class="btn ${c.reconciled ? 'btn-outline' : 'btn-green'} btn-sm" onclick="toggleReconcile('${c.id}')">${c.reconciled ? 'Undo' : '✓ Reconcile'}</button></td>
+    </tr>`;
+      }).join('');
+    }
+    function toggleReconcile(id) {
+      const c = DB.collections.find(x => x.id === id); if (!c) return;
+      c.reconciled = !c.reconciled; saveDB(); renderReconciliation();
+      toast(c.reconciled ? '✅' : '↩️', c.reconciled ? 'Marked reconciled' : 'Reconciliation undone', 'var(--green)');
+    }
+
+    // ════════════════════════════════════════════
+    // LABEL PRINTING
+    // ════════════════════════════════════════════
+    function renderLabels() {
+      const el = document.getElementById('label-preview'); if (!el) return;
+      const clients = DB.clients.filter(c => c.status === 'Active').sort((a, b) => a.name.localeCompare(b.name));
+      if (!clients.length) { el.innerHTML = '<div style="color:var(--muted);">No active clients</div>'; return; }
+      el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;">${clients.map(c => `
+    <div style="background:var(--s3);border:1px solid var(--border);border-radius:8px;padding:0.75rem;font-size:0.75rem;">
+      <div style="font-weight:700;margin-bottom:0.2rem;">${c.name}</div>
+      <div style="color:var(--muted);">${c.address || 'No address'}</div>
+      <div style="color:var(--muted);margin-top:0.2rem;">📞 ${c.mobile || '—'}</div>
+      <div style="color:var(--gold);font-size:0.65rem;margin-top:0.2rem;">${c.clientcode || ''}</div>
+    </div>`).join('')}</div>`;
+    }
+    function printLabels() {
+      const w = window.open('', '_blank');
+      const clients = DB.clients.filter(c => c.status === 'Active');
+      w.document.write(`<html><head><title>Labels</title><style>body{font-family:sans-serif;padding:10px;}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}.label{border:1px solid #ccc;padding:12px;font-size:12px;page-break-inside:avoid;}.name{font-weight:bold;margin-bottom:4px;}@media print{.grid{gap:5px;}.label{border:1px solid #999;}}</style></head><body><div class="grid">${clients.map(c => `<div class="label"><div class="name">${c.name}</div><div>${c.address || ''}</div><div>📞 ${c.mobile || ''}</div><div style="font-size:10px;color:#888;">${c.clientcode || ''}</div></div>`).join('')}</div><script>window.print();</script>
 </body>
 
-</html>
+</html>`);
+}
+
+// ════════════════════════════════════════════
+// QUERY BUILDER (Custom Reports)
+// ════════════════════════════════════════════
+function renderQueryBuilder(){
+const el=document.getElementById('qb-result');if(!el)return;
+el.innerHTML='<div style="color:var(--muted);font-size:0.82rem;">Select fields and click "Run Query"</div>';
+}
+function runQuery(){
+const source=document.getElementById('qb-source')?.value||'clients';
+const checks=document.querySelectorAll('.qb-field:checked');
+const fields=Array.from(checks).map(c=>c.value);
+if(!fields.length){toast('⚠️','Select at least one field','var(--red)');return;}
+const filterField=document.getElementById('qb-filter-field')?.value;
+const filterVal=document.getElementById('qb-filter-val')?.value?.toLowerCase()||'';
+let data=source==='clients'?DB.clients:source==='collections'?DB.collections:DB.vouchers||[];
+if(filterField&&filterVal){data=data.filter(r=>String(r[filterField]||'').toLowerCase().includes(filterVal));}
+if(!data.length){document.getElementById('qb-result').innerHTML='<div style="color:var(--muted);">No results</div>
+';return;}
+const rows=data.map(r=>fields.map(f=>r[f]??'—'));
+document.getElementById('qb-result').innerHTML=`<div class="table-wrap">
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>${fields.map(f=>`<th>${f}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${typeof v==='number'&&v>999?fmtMoney(v):v}</td>`).join('')}</tr>
+        `).join('')}</tbody>
+    </table>
+  </div>
+</div>
+<div style="margin-top:0.5rem;font-size:0.72rem;color:var(--muted);">${data.length} records found</div>`;
+}
+function exportQueryExcel(){
+if(typeof XLSX==='undefined')return;
+const table=document.querySelector('#qb-result table');if(!table)return;
+const wb=XLSX.utils.table_to_book(table);XLSX.writeFile(wb,`custom_report_${today()}.xlsx`);
+toast('📊','Query exported to Excel','var(--green)');
+}
+
+// ════════════════════════════════════════════
+// LETTER / SMS TEMPLATES
+// ════════════════════════════════════════════
+function renderTemplates(){
+const el=document.getElementById('template-list');if(!el)return;
+const tpls=DB.templates||[];
+if(!tpls.length){el.innerHTML='<div style="color:var(--muted);font-size:0.82rem;">No templates yet. Click "+ New
+  Template" to create one.</div>';return;}
+el.innerHTML=tpls.map(t=>`<div class="hl-card">
+  <div>
+    <div style="font-family:'Syne',sans-serif;font-weight:700;">${t.name} <span
+        class="badge b-blue">${t.type||'SMS'}</span></div>
+    <div
+      style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem;max-width:400px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      ${t.body}</div>
+  </div>
+  <div style="display:flex;gap:0.3rem;"><button class="btn btn-blue btn-sm" onclick="previewTemplate('${t.id}')">👁
+      Preview</button><button class="btn btn-red btn-sm" onclick="deleteTemplate('${t.id}')">🗑</button></div>
+</div>`).join('');
+}
+function addTemplate(){
+const name=prompt('Template Name:','EMI Reminder');if(!name)return;
+const type=prompt('Type (SMS/Letter/WhatsApp):','SMS');
+const body=prompt('Body (use {name}, {amount}, {date}, {emi}, {mobile}, {code}):','Dear {name}, your EMI of ₹{emi} is
+due on {date}. Please pay promptly. - Shubh Labh');
+if(!body)return;
+if(!DB.templates)DB.templates=[];
+DB.templates.push({id:uid(),name,type:type||'SMS',body,createdAt:new Date().toISOString()});
+saveDB();renderTemplates();toast('✅','Template created','var(--green)');
+}
+function
+deleteTemplate(id){if(!confirm('Delete?'))return;DB.templates=(DB.templates||[]).filter(t=>t.id!==id);saveDB();renderTemplates();}
+function previewTemplate(id){
+const t=(DB.templates||[]).find(x=>x.id===id);if(!t)return;
+const sample=DB.clients[0]||{name:'John Doe',emi:5000,mobile:'9876543210',clientcode:'SL001'};
+let
+text=t.body.replace(/\{name\}/g,sample.name||'').replace(/\{emi\}/g,fmtMoney(sample.emi||0)).replace(/\{amount\}/g,fmtMoney(sample.emi||0)).replace(/\{date\}/g,today()).replace(/\{mobile\}/g,sample.mobile||'').replace(/\{code\}/g,sample.clientcode||'');
+alert(`📝 Preview (using first client data):\n\n${text}`);
+}
+
+// ════════════════════════════════════════════
+// YEAR-END PROCESS
+// ════════════════════════════════════════════
+function renderYearEnd(){
+const el=document.getElementById('ye-content');if(!el)return;
+const now=new Date();const fy=now.getMonth()>=3?now.getFullYear():now.getFullYear()-1;
+const fyStart=`${fy}-04-01`;const fyEnd=`${fy+1}-03-31`;
+const totalColl=DB.collections.filter(c=>c.date>=fyStart&&c.date<=fyEnd).reduce((s,c)=>s+Number(c.amount||0),0);
+  const totalPenalty=DB.collections.filter(c=>c.date>=fyStart&&c.date<=fyEnd).reduce((s,c)=>s+Number(c.penalty||0),0);
+    const newClients=DB.clients.filter(c=>c.date>=fyStart&&c.date<=fyEnd).length; const
+      closedLoans=DB.clients.filter(c=>c.status==='Closed').length;
+      const disbursed=DB.clients.filter(c=>c.date>=fyStart&&c.date<=fyEnd).reduce((s,c)=>s+Number(c.loan||0),0);
+        el.innerHTML=`
+        <div class="acc-card">
+          <div style="font-family:'Syne',sans-serif;font-weight:700;color:var(--gold);margin-bottom:0.75rem;">📅
+            Financial Year ${fy}-${(fy+1).toString().slice(2)} Summary</div>
+          <div class="acc-row"><span class="acc-label">Period</span><span class="acc-val">${fmtDate(fyStart)} to
+              ${fmtDate(fyEnd)}</span></div>
+          <div class="acc-row"><span class="acc-label">New Clients Added</span><span
+              class="acc-val">${newClients}</span></div>
+          <div class="acc-row"><span class="acc-label">Loans Disbursed</span><span class="acc-val"
+              style="color:var(--red);">${fmtMoney(disbursed)}</span></div>
+          <div class="acc-row"><span class="acc-label">Total Collections</span><span class="acc-val"
+              style="color:var(--green);">${fmtMoney(totalColl)}</span></div>
+          <div class="acc-row"><span class="acc-label">Penalty Income</span><span class="acc-val"
+              style="color:var(--green);">${fmtMoney(totalPenalty)}</span></div>
+          <div class="acc-row"><span class="acc-label">Loans Closed</span><span class="acc-val">${closedLoans}</span>
+          </div>
+          <div class="acc-row"><span class="acc-label">Active Portfolio</span><span class="acc-val"
+              style="color:var(--gold);">${fmtMoney(DB.clients.filter(c=>c.status==='Active').reduce((s,c)=>s+Number(c.loan||0),0))}</span>
+          </div>
+        </div>
+        <button class="btn btn-gold" onclick="processYearEnd()" style="margin-top:0.75rem;">🔄 Process Year-End
+          Closing</button>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem;">This will create an audit entry and backup
+          before year-end.</div>`;
+        }
+        function processYearEnd(){
+        if(!confirm('⚠️ Process Year-End? This will:\n1. Create automatic backup\n2. Log the year-end event\n3. No data
+        will be deleted\n\nContinue?'))return;
+        backupData();
+        audit('YEAR_END',`Year-end process executed. Active: ${DB.clients.filter(c=>c.status==='Active').length},
+        Closed: ${DB.clients.filter(c=>c.status==='Closed').length}`);
+        toast('✅','Year-end processed. Backup created.','var(--green)');
+        renderYearEnd();
+        }
+
+        // ════════════════════════════════════════════
+        // PHOTO / KYC VAULT
+        // ════════════════════════════════════════════
+        function renderPhotoVault(){
+        const el=document.getElementById('vault-list');if(!el)return;
+        const clients=DB.clients.filter(c=>c.photos&&c.photos.length>0);
+        if(!clients.length){el.innerHTML='<div class="empty">
+          <div class="empty-icon">📸</div>
+          <div class="empty-text">No photos uploaded yet. Use "Upload Photo" from a client\'s profile.</div>
+        </div>';return;}
+        el.innerHTML=clients.map(c=>`<div class="hl-card">
+          <div>
+            <div style="font-family:'Syne',sans-serif;font-weight:700;">${c.name} <span
+                class="badge b-blue">${(c.photos||[]).length} files</span></div>
+            <div style="font-size:0.72rem;color:var(--muted);">${c.clientcode||''}</div>
+          </div>
+          <button class="btn btn-blue btn-sm" onclick="viewPhotos('${c.id}')">📸 View</button>
+        </div>`).join('');
+        }
+        function uploadClientPhoto(clientId){
+        const input=document.createElement('input');input.type='file';input.accept='image/*';input.multiple=true;
+        input.onchange=function(e){
+        Array.from(e.target.files).forEach(file=>{
+        const reader=new FileReader();reader.onload=function(ev){
+        const client=DB.clients.find(c=>c.id===clientId);if(!client)return;
+        if(!client.photos)client.photos=[];
+        client.photos.push({name:file.name,data:ev.target.result,type:file.type,date:new Date().toISOString()});
+        saveDB();toast('📸',`Photo "${file.name}" saved`,'var(--green)');
+        };reader.readAsDataURL(file);
+        });
+        };input.click();
+        }
+        function viewPhotos(clientId){
+        const client=DB.clients.find(c=>c.id===clientId);if(!client||!client.photos?.length)return;
+        const w=window.open('','_blank','width=800,height=600');
+        w.document.write(`<html>
+
+        <head>
+          <title>Photos - ${client.name}</title>
+          <style>
+            body {
+              background: #111;
+              color: #fff;
+              font-family: sans-serif;
+              padding: 20px;
+            }
+
+            img {
+              max-width: 300px;
+              margin: 8px;
+              border-radius: 8px;
+              border: 1px solid #333;
+            }
+
+            .grid {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 12px;
+            }
+
+            h2 {
+              color: #d4a843;
+            }
+          </style>
+        </head>
+
+        <body>
+          <h2>📸 ${client.name} - KYC Photos</h2>
+          <div class="grid">${client.photos.map(p=>`<div><img src="${p.data}" alt="${p.name}" />
+              <div style="font-size:12px;color:#888;margin-top:4px;">${p.name} · ${fmtDate(p.date)}</div>
+            </div>`).join('')}</div>
+        </body>
+
+        </html>`);
+        }
+
+        // ════════════════════════════════════════════
+        // ADVANCED REPORT FILTERS
+        // ════════════════════════════════════════════
+        function addReportFilters(){
+        const tables=document.querySelectorAll('.table-header');
+        tables.forEach(header=>{
+        if(header.querySelector('.report-filter'))return;
+        const filterBtn=document.createElement('button');
+        filterBtn.className='btn btn-outline btn-sm report-filter';
+        filterBtn.innerHTML='🔍 Filter';
+        filterBtn.title='Filter by Area/Branch/Broker';
+        filterBtn.onclick=()=>{
+        const field=prompt('Filter by field (area/branch/broker/status/type):','status');
+        const val=prompt(`Filter value for "${field}":`,'');
+        if(!field||!val)return;
+        toast('🔍',`Filtered by ${field}: ${val}`,'var(--blue)');
+        };
+        header.appendChild(filterBtn);
+        });
+        }
+
+        // ════════════════════════════════════════════
+        // F1-F12 SHORTCUT KEYS + HELP OVERLAY
+        // ════════════════════════════════════════════
+        const FKEY_MAP = {
+        'F1':{ label:'Help / Shortcuts', action:()=>toggleShortcutHelp() },
+        'F2':{ label:'Add Client', action:()=>openAddClient() },
+        'F3':{ label:'Search', action:()=>document.getElementById('search-input')?.focus() },
+        'F4':{ label:'Collections', action:()=>showPage('collections',document.querySelector('[onclick*=collections]'))
+        },
+        'F5':{ label:'Dashboard', action:()=>showPage('dashboard',document.querySelector('[onclick*=dashboard]')) },
+        'F6':{ label:'Analytics', action:()=>showPage('analytics',document.querySelector('[onclick*=analytics]')) },
+        'F7':{ label:'Accounting', action:()=>showPage('accounting',null) },
+        'F8':{ label:'Hand Loans', action:()=>showPage('handloans',null) },
+        'F9':{ label:'Vouchers', action:()=>showPage('vouchers',null) },
+        'F10':{ label:'Backup', action:()=>backupData() },
+        'F11':{ label:'Reports', action:()=>showPage('reports',document.querySelector('[onclick*=reports]')) },
+        'F12':{ label:'Forecasts', action:()=>showPage('forecast',null) }
+        };
+        document.addEventListener('keydown',function(e2){
+        if(!currentUser)return;
+        const fk=FKEY_MAP[e2.key];
+        if(fk){e2.preventDefault();fk.action();}
+        if(e2.key==='?'&&!['INPUT','TEXTAREA','SELECT'].includes(e2.target.tagName)){toggleShortcutHelp();}
+        });
+
+        function toggleShortcutHelp(){
+        let overlay=document.getElementById('shortcut-help');
+        if(overlay){overlay.remove();return;}
+        overlay=document.createElement('div');overlay.id='shortcut-help';
+        overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);';
+        overlay.onclick=()=>overlay.remove();
+        overlay.innerHTML=`<div
+          style="background:var(--s2);border:1px solid var(--border);border-radius:16px;padding:2rem;max-width:500px;width:90%;"
+          onclick="event.stopPropagation()">
+          <div
+            style="font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:var(--gold);margin-bottom:1rem;">
+            ⌨️ Keyboard Shortcuts</div>
+          <div style="display:grid;grid-template-columns:80px 1fr;gap:0.4rem 1rem;">
+            ${Object.entries(FKEY_MAP).map(([k,v])=>`<span
+              style="font-family:monospace;background:var(--s3);padding:0.2rem 0.5rem;border-radius:4px;font-size:0.78rem;text-align:center;border:1px solid var(--border);">${k}</span><span
+              style="font-size:0.82rem;color:var(--text);padding:0.2rem 0;">${v.label}</span>`).join('')}
+            <span
+              style="font-family:monospace;background:var(--s3);padding:0.2rem 0.5rem;border-radius:4px;font-size:0.78rem;text-align:center;border:1px solid var(--border);">N</span><span
+              style="font-size:0.82rem;color:var(--text);padding:0.2rem 0;">New Client</span>
+            <span
+              style="font-family:monospace;background:var(--s3);padding:0.2rem 0.5rem;border-radius:4px;font-size:0.78rem;text-align:center;border:1px solid var(--border);">S</span><span
+              style="font-size:0.82rem;color:var(--text);padding:0.2rem 0;">Search</span>
+            <span
+              style="font-family:monospace;background:var(--s3);padding:0.2rem 0.5rem;border-radius:4px;font-size:0.78rem;text-align:center;border:1px solid var(--border);">B</span><span
+              style="font-size:0.82rem;color:var(--text);padding:0.2rem 0;">Backup</span>
+            <span
+              style="font-family:monospace;background:var(--s3);padding:0.2rem 0.5rem;border-radius:4px;font-size:0.78rem;text-align:center;border:1px solid var(--border);">?</span><span
+              style="font-size:0.82rem;color:var(--text);padding:0.2rem 0;">This Help</span>
+          </div>
+          <div style="text-align:center;margin-top:1rem;font-size:0.72rem;color:var(--muted);">Press ESC or click
+            outside to close</div>
+        </div>`;
+        document.body.appendChild(overlay);
+        }
+
+        // ════════════════════════════════════════════
+        // INJECT ALL V3 PAGES INTO DOM
+        // ════════════════════════════════════════════
+        function injectV3Pages(){
+        const app=document.getElementById('app');if(!app)return;
+        if(document.getElementById('page-vouchers'))return;
+
+        // Vouchers Page
+        const vp=document.createElement('div');vp.className='main';vp.id='page-vouchers';vp.style.display='none';
+        vp.innerHTML=`<div class="topbar">
+          <div class="page-title">📋 Voucher Management</div>
+          <div style="display:flex;gap:0.5rem;"><button class="btn btn-gold" onclick="addVoucher()">+ New
+              Voucher</button></div>
+        </div>
+        <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card" style="--c1:var(--gold)">
+            <div class="stat-icon">📋</div>
+            <div class="stat-val" id="v-total">0</div>
+            <div class="stat-label">Total Vouchers</div>
+          </div>
+          <div class="stat-card" style="--c1:var(--green)">
+            <div class="stat-icon">📥</div>
+            <div class="stat-val" id="v-in">₹0</div>
+            <div class="stat-label">Total In</div>
+          </div>
+          <div class="stat-card" style="--c1:var(--red)">
+            <div class="stat-icon">📤</div>
+            <div class="stat-val" id="v-out">₹0</div>
+            <div class="stat-label">Total Out</div>
+          </div>
+        </div>
+        <div id="voucher-list"></div>`;
+        app.appendChild(vp);
+
+        // Bulk Receipt Page
+        const br=document.createElement('div');br.className='main';br.id='page-bulkreceipt';br.style.display='none';
+        br.innerHTML=`<div class="topbar">
+          <div class="page-title">⚡ Bulk Receipt Entry</div>
+          <div style="display:flex;gap:0.5rem;align-items:center;"><label
+              style="font-size:0.78rem;color:var(--muted);">Date:</label><input type="date" id="bulk-date"
+              value="${today()}" onchange="renderBulkReceipt()"
+              style="padding:0.4rem;background:var(--s3);border:1px solid var(--border);border-radius:6px;color:var(--text);" /><button
+              class="btn btn-gold" onclick="saveBulkReceipts()">💾 Save All Receipts</button></div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Client</th>
+                  <th>Mobile</th>
+                  <th>EMI</th>
+                  <th>Due #</th>
+                  <th>Amount</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody id="bulk-body"></tbody>
+            </table>
+          </div>
+        </div>`;
+        app.appendChild(br);
+
+        // Masters Page
+        const mp=document.createElement('div');mp.className='main';mp.id='page-masters';mp.style.display='none';
+        mp.innerHTML=`<div class="topbar">
+          <div class="page-title">🏢 Master Data</div>
+        </div>
+        <div id="masters-content" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;"></div>`;
+        app.appendChild(mp);
+
+        // IRR Calculator Page
+        const ip=document.createElement('div');ip.className='main';ip.id='page-irrcalc';ip.style.display='none';
+        ip.innerHTML=`<div class="topbar">
+          <div class="page-title">📐 IRR Calculator</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+          <div class="acc-card">
+            <div style="font-family:'Syne',sans-serif;font-weight:700;color:var(--gold);margin-bottom:0.75rem;">Enter
+              Loan Details</div>
+            <div class="fl"><label>Loan Amount (₹)</label><input type="number" id="irr-loan" placeholder="500000" />
+            </div>
+            <div class="fl"><label>EMI Amount (₹)</label><input type="number" id="irr-emi" placeholder="15000" /></div>
+            <div class="fl"><label>Tenure (months)</label><input type="number" id="irr-tenure" placeholder="36" /></div>
+            <button class="btn btn-gold" onclick="calcIRR()" style="margin-top:0.5rem;">📊 Calculate IRR</button>
+          </div>
+          <div id="irr-result"></div>
+        </div>`;
+        app.appendChild(ip);
+
+        // Query Builder Page
+        const qp=document.createElement('div');qp.className='main';qp.id='page-querybuilder';qp.style.display='none';
+        const
+        clientFields=['clientcode','agentcode','name','mobile','loan','rate','tenure','emi','dueday','status','veh_number','veh_make','veh_model','area','branch','guarantor_name','agreement'];
+        qp.innerHTML=`<div class="topbar">
+          <div class="page-title">🔧 Query Builder</div>
+          <div style="display:flex;gap:0.5rem;"><button class="btn btn-gold" onclick="runQuery()">▶ Run
+              Query</button><button class="btn btn-outline" onclick="exportQueryExcel()">📊 Export Excel</button></div>
+        </div>
+        <div style="display:grid;grid-template-columns:300px 1fr;gap:1rem;">
+          <div class="acc-card">
+            <div style="font-family:'Syne',sans-serif;font-weight:700;color:var(--gold);margin-bottom:0.5rem;">Configure
+              Report</div>
+            <div class="fl"><label>Data Source</label><select id="qb-source"
+                style="background:var(--s3);border:1px solid var(--border);border-radius:6px;padding:0.5rem;color:var(--text);">
+                <option value="clients">Clients</option>
+                <option value="collections">Collections</option>
+                <option value="vouchers">Vouchers</option>
+              </select></div>
+            <div class="fl"><label>Columns</label>
+              <div style="max-height:200px;overflow-y:auto;">${clientFields.map(f=>`<label
+                  style="display:flex;align-items:center;gap:0.4rem;padding:0.2rem 0;font-size:0.78rem;cursor:pointer;text-transform:capitalize;"><input
+                    type="checkbox" class="qb-field" value="${f}" checked />${f.replace(/_/g,' ')}</label>`).join('')}
+              </div>
+            </div>
+            <div class="fl"><label>Filter Field</label><input type="text" id="qb-filter-field" placeholder="e.g. status"
+                style="background:var(--s3);border:1px solid var(--border);border-radius:6px;padding:0.5rem;color:var(--text);" />
+            </div>
+            <div class="fl"><label>Filter Value</label><input type="text" id="qb-filter-val" placeholder="e.g. Active"
+                style="background:var(--s3);border:1px solid var(--border);border-radius:6px;padding:0.5rem;color:var(--text);" />
+            </div>
+          </div>
+          <div id="qb-result"></div>
+        </div>`;
+        app.appendChild(qp);
+
+        // Labels Page
+        const lp=document.createElement('div');lp.className='main';lp.id='page-labels';lp.style.display='none';
+        lp.innerHTML=`<div class="topbar">
+          <div class="page-title">🏷 Label Printing</div>
+          <div><button class="btn btn-gold" onclick="printLabels()">🖨 Print Labels</button></div>
+        </div>
+        <div id="label-preview"></div>`;
+        app.appendChild(lp);
+
+        // Templates Page
+        const tp=document.createElement('div');tp.className='main';tp.id='page-templates';tp.style.display='none';
+        tp.innerHTML=`<div class="topbar">
+          <div class="page-title">✉️ Letter / SMS Templates</div>
+          <div><button class="btn btn-gold" onclick="addTemplate()">+ New Template</button></div>
+        </div>
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem;">Variables: <code>{name}</code>
+          <code>{emi}</code> <code>{amount}</code> <code>{date}</code> <code>{mobile}</code> <code>{code}</code></div>
+        <div id="template-list"></div>`;
+        app.appendChild(tp);
+
+        // Year-End Page
+        const yp=document.createElement('div');yp.className='main';yp.id='page-yearend';yp.style.display='none';
+        yp.innerHTML=`<div class="topbar">
+          <div class="page-title">📅 Year-End Process</div>
+        </div>
+        <div id="ye-content"></div>`;
+        app.appendChild(yp);
+
+        // Bank Reconciliation Page
+        const rp=document.createElement('div');rp.className='main';rp.id='page-reconciliation';rp.style.display='none';
+        rp.innerHTML=`<div class="topbar">
+          <div class="page-title">🏦 Bank Reconciliation</div>
+        </div>
+        <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card" style="--c1:var(--blue)">
+            <div class="stat-val" id="recon-total">0</div>
+            <div class="stat-label">Bank Transactions</div>
+          </div>
+          <div class="stat-card" style="--c1:var(--green)">
+            <div class="stat-val" id="recon-done">0</div>
+            <div class="stat-label">Reconciled</div>
+          </div>
+          <div class="stat-card" style="--c1:var(--red)">
+            <div class="stat-val" id="recon-pending">0</div>
+            <div class="stat-label">Pending</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Client</th>
+                  <th>Receipt</th>
+                  <th>Mode</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="recon-body"></tbody>
+            </table>
+          </div>
+        </div>`;
+        app.appendChild(rp);
+
+        // Photo Vault Page
+        const pp=document.createElement('div');pp.className='main';pp.id='page-photovault';pp.style.display='none';
+        pp.innerHTML=`<div class="topbar">
+          <div class="page-title">📸 Photo / KYC Vault</div>
+        </div>
+        <div id="vault-list"></div>`;
+        app.appendChild(pp);
+        }
+
+        // ════════════════════════════════════════════
+        // ENHANCE SIDEBAR NAV — V3 items
+        // ════════════════════════════════════════════
+        function enhanceSidebarV3(){
+        const nav=document.querySelector('.sidebar-nav');if(!nav)return;
+        const v3Items=[
+        {page:'vouchers',icon:'📋',label:'Vouchers'},
+        {page:'bulkreceipt',icon:'⚡',label:'Bulk Receipts'},
+        {page:'reconciliation',icon:'🏦',label:'Reconciliation'},
+        {page:'irrcalc',icon:'📐',label:'IRR Calculator'},
+        {page:'querybuilder',icon:'🔧',label:'Query Builder'},
+        {page:'labels',icon:'🏷',label:'Label Print'},
+        {page:'templates',icon:'✉️',label:'Templates'},
+        {page:'masters',icon:'🏢',label:'Master Data'},
+        {page:'yearend',icon:'📅',label:'Year End'},
+        {page:'photovault',icon:'📸',label:'Photo Vault'}
+        ];
+        v3Items.forEach(item=>{
+        if(document.querySelector(`button[data-v3page="${item.page}"]`))return;
+        const btn=document.createElement('button');
+        btn.className='nav-item';btn.dataset.v3page=item.page;
+        btn.onclick=()=>showPage(item.page,btn);
+        btn.innerHTML=`<span class="icon">${item.icon}</span>${item.label}`;
+        nav.appendChild(btn);
+        });
+        }
+
+        // ── EXTEND showPage for V3 pages ──
+        const _origShowPageV3=showPage;
+        showPage=function(name,btn){
+        _origShowPageV3(name,btn);
+        if(name==='vouchers')renderVouchers();
+        if(name==='bulkreceipt')renderBulkReceipt();
+        if(name==='masters')renderMasters();
+        if(name==='irrcalc')renderIRRCalc();
+        if(name==='querybuilder')renderQueryBuilder();
+        if(name==='labels')renderLabels();
+        if(name==='templates')renderTemplates();
+        if(name==='yearend')renderYearEnd();
+        if(name==='reconciliation')renderReconciliation();
+        if(name==='photovault')renderPhotoVault();
+        // highlight v3 nav
+        document.querySelectorAll('[data-v3page]').forEach(b=>b.classList.toggle('active',b.dataset.v3page===name));
+        };
+
+        // ── INIT V3 ──
+        const _origDoLoginV3=doLogin;
+        doLogin=function(){
+        _origDoLoginV3();
+        setTimeout(()=>{injectV3Pages();enhanceSidebarV3();addReportFilters();},400);
+        };
+        document.addEventListener('DOMContentLoaded',()=>{
+        setTimeout(()=>{injectV3Pages();enhanceSidebarV3();addReportFilters();},600);
+        });
+
+        </script>
+        </body>
+
+        </html>
